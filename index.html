@@ -2483,7 +2483,9 @@ const BLOCK_TARGET_SEC = 120;
 // First halving ETA — May 1, 2026, 4:08 AM (interpreted as user's local time for display).
 const FIRST_HALVING_ETA = new Date("2026-05-01T04:08:00");
 // Average observed seconds per block (back-derived: 1,049,539 blocks / time-since-genesis).
-const OBSERVED_BLOCK_SEC = 116;
+// Nexa's protocol target is 120 seconds. Difficulty adjusts each block to
+// hold this average, so we display the canonical target throughout.
+const OBSERVED_BLOCK_SEC = 120;
 
 /* ============================================================
    ROSTRUM — connect to a public Rostrum WebSocket endpoint to pull live
@@ -2714,6 +2716,7 @@ function useRostrum(blockCount = 25) {
           client = c;
           setState((s) => ({ ...s, connected: true, url, banner: ver }));
 
+          // Push: Rostrum streams every new header the moment a block is found.
           c.on('blockchain.headers.subscribe', (params) => {
             const h = Array.isArray(params) ? params[0] : params;
             if (h?.height) {
@@ -2721,13 +2724,32 @@ function useRostrum(blockCount = 25) {
               fetchRecent(h.height);
             }
           });
+          // Initial subscribe — returns the current tip immediately.
+          let lastSeenTip = 0;
           try {
             const tip = await c.request('blockchain.headers.subscribe', []);
             if (tip?.height) {
+              lastSeenTip = tip.height;
               setState((s) => ({ ...s, tipHeight: tip.height }));
               await fetchRecent(tip.height);
             }
           } catch {}
+          // Safety-net poll every 20s in case the subscription goes silent
+          // (some Rostrum endpoints drop pushes after long idle). Only triggers
+          // a refetch when the tip has genuinely advanced.
+          const pollId = setInterval(async () => {
+            if (cancelled || !client) return;
+            try {
+              const tip = await client.request('blockchain.headers.subscribe', []);
+              if (tip?.height && tip.height > lastSeenTip) {
+                lastSeenTip = tip.height;
+                setState((s) => ({ ...s, tipHeight: tip.height }));
+                fetchRecent(tip.height);
+              }
+            } catch {}
+          }, 20_000);
+          // Attach to the client so the outer cleanup tears it down.
+          client._pollId = pollId;
           return;
         } catch {
           c.close();
@@ -2736,7 +2758,11 @@ function useRostrum(blockCount = 25) {
       if (!cancelled) setState((s) => ({ ...s, error: 'No Rostrum endpoint reachable' }));
     })();
 
-    return () => { cancelled = true; client?.close(); };
+    return () => {
+      cancelled = true;
+      if (client?._pollId) clearInterval(client._pollId);
+      client?.close();
+    };
   }, []);
 
   return state;
@@ -4110,7 +4136,7 @@ function Notes() {
               The reward halves every 1,050,000 blocks. Era 0 emits 10.5T NEXA, which is half the total supply. Era 1 emits half of that, era 2 half of that, and so on. Total supply approaches <strong>21,000,000,000,000 NEXA</strong> but never reaches it exactly.
             </p>
             <p>
-              Blocks have averaged around {OBSERVED_BLOCK_SEC} seconds in practice rather than the 120-second target, so halvings happen a few weeks earlier than a calendar projection would suggest. Otherwise the schedule is deterministic and verifiable on-chain.
+              Blocks target {OBSERVED_BLOCK_SEC} seconds via difficulty adjustment each block. The emission schedule, halving boundaries, and total cap of 21 trillion NEXA are deterministic and verifiable on-chain.
             </p>
             <p>
               By 2138 the per-block subsidy hits 0.01 NEXA. From there miner revenue is dominated by <strong>transaction fees</strong>, and new issuance is effectively zero.
@@ -5315,13 +5341,19 @@ function BlockChain({ current, rostrum, blockCount = 25, setBlockCount }) {
   const chainRef = useRef(null);
   const drag = useRef({ active: false, startX: 0, startScroll: 0, moved: 0 });
 
-  // Mining tick
+  // Mining tick. When Rostrum is connected, this drives ONLY the visual
+  // mining-progress bar — never appends placeholder blocks. The real chain
+  // tip comes from the Rostrum subscription/refetch effect below. When the
+  // 120s target elapses with no new tip, the bar simply holds at 100% until
+  // the real block lands. In offline/simulated mode it still produces fake
+  // blocks so the page works without a Rostrum endpoint.
   useEffect(() => {
     const id = setInterval(() => {
       const elapsed = (Date.now() - startRef.current) / 1000;
       const pct = Math.min(100, (elapsed / OBSERVED_BLOCK_SEC) * 100);
       setProgress(pct);
-      if (pct >= 100) {
+      if (pct >= 100 && !rostrum?.connected) {
+        // Offline only: synthesize a placeholder so the demo keeps moving.
         setBlocks((bs) => {
           const last = bs[bs.length - 1];
           const next = makeBlock(last.height + 1, last.hash);
