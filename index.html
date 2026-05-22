@@ -3645,6 +3645,13 @@ function EmissionCurve({ scrubBlock, setScrubBlock, current }) {
   };
   const selIdx = useMemo(() => findIdx(scrubBlock), [scrubBlock]);
   const todayIdx = useMemo(() => findIdx(current.currentBlock), [current.currentBlock]);
+  const selIdxRef = useRef(selIdx);
+  const todayIdxRef = useRef(todayIdx);
+
+  useEffect(() => {
+    selIdxRef.current = selIdx;
+    todayIdxRef.current = todayIdx;
+  }, [selIdx, todayIdx]);
 
   const activeMetrics = CURVE_METRICS.filter((m) => enabled[m.id]);
 
@@ -3653,9 +3660,12 @@ function EmissionCurve({ scrubBlock, setScrubBlock, current }) {
     afterDatasetsDraw(chart) {
       const { ctx, chartArea } = chart;
       const xScale = chart.scales.x;
+      const lastIdx = Math.max(0, (chart.data.labels?.length || 1) - 1);
+      const selectedIdx = Math.max(0, Math.min(lastIdx, selIdxRef.current));
+      const currentIdx = Math.max(0, Math.min(lastIdx, todayIdxRef.current));
 
       // Today line
-      const tx = xScale.getPixelForValue(todayIdx);
+      const tx = xScale.getPixelForValue(currentIdx);
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(tx, chartArea.top);
@@ -3671,7 +3681,7 @@ function EmissionCurve({ scrubBlock, setScrubBlock, current }) {
       ctx.restore();
 
       // Selected — vertical line
-      const sx = xScale.getPixelForValue(selIdx);
+      const sx = xScale.getPixelForValue(selectedIdx);
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(sx, chartArea.top);
@@ -3685,7 +3695,7 @@ function EmissionCurve({ scrubBlock, setScrubBlock, current }) {
       chart.data.datasets.forEach((ds) => {
         const yScale = chart.scales[ds.yAxisID];
         if (!yScale) return;
-        const value = ds.data[selIdx];
+        const value = ds.data[selectedIdx];
         if (value == null) return;
         const sy = yScale.getPixelForValue(value);
         ctx.save();
@@ -3698,7 +3708,7 @@ function EmissionCurve({ scrubBlock, setScrubBlock, current }) {
         ctx.restore();
       });
     },
-  }), [selIdx, todayIdx]);
+  }), []);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -3817,7 +3827,7 @@ function EmissionCurve({ scrubBlock, setScrubBlock, current }) {
       plugins: [cursorPlugin],
     });
     return () => chartRef.current?.destroy();
-  }, [labels, allData, cursorPlugin, enabled]);
+  }, [labels, allData, enabled, zoom]);
 
   useEffect(() => { if (chartRef.current) chartRef.current.update('none'); }, [selIdx, todayIdx]);
 
@@ -7249,8 +7259,8 @@ function Calendar({ showToast }) {
   const dayOfWeek = selected.toLocaleString('en-US', { weekday: 'long' });
   const ageYears = (daysSinceLaunch / 365.25);
 
-  // Coins minted on this exact day at the era reward (~720 blocks/day)
-  const blocksPerDay = Math.round(86400 / OBSERVED_BLOCK_SEC);
+  // Coins minted on this exact day at the protocol target (~720 blocks/day)
+  const blocksPerDay = Math.round(86400 / BLOCK_TARGET_SEC);
   const dailyEmission = state ? blocksPerDay * state.reward : 0;
 
   // Days/blocks until next halving from this date
