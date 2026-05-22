@@ -3039,12 +3039,16 @@ function Hero({ current, showToast }) {
 /* ---- Big draggable scrubber (full-width) ---- */
 function Scrubber({ scrubBlock, setScrubBlock, current }) {
   const trackRef = useRef(null);
+  const handleRef = useRef(null);
+  const sectionRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const ref = useReveal();
 
   const stateNow = useMemo(() => stateAtBlock(scrubBlock), [scrubBlock]);
   const handlePct = (scrubBlock / TOTAL_BLOCKS) * 100;
   const todayPct = (current.currentBlock / TOTAL_BLOCKS) * 100;
+  const scrubBlockRef = useRef(scrubBlock);
+  useEffect(() => { scrubBlockRef.current = scrubBlock; }, [scrubBlock]);
 
   const blockFromX = useCallback((clientX) => {
     if (!trackRef.current) return scrubBlock;
@@ -3057,6 +3061,9 @@ function Scrubber({ scrubBlock, setScrubBlock, current }) {
     e.preventDefault();
     setDragging(true);
     setScrubBlock(blockFromX(e.clientX));
+    // Focus the handle so the keyboard shortcuts described in the hint
+    // (arrow keys, Shift+arrows, Home/End) start working immediately.
+    handleRef.current?.focus({ preventScroll: true });
   };
 
   useEffect(() => {
@@ -3095,11 +3102,34 @@ function Scrubber({ scrubBlock, setScrubBlock, current }) {
 
   const onKeyDown = (e) => {
     const step = e.shiftKey ? BLOCKS_PER_HALVING : 50_000;
-    if (e.key === 'ArrowLeft') { setScrubBlock(Math.max(0, scrubBlock - step)); e.preventDefault(); }
-    if (e.key === 'ArrowRight') { setScrubBlock(Math.min(TOTAL_BLOCKS, scrubBlock + step)); e.preventDefault(); }
+    const cur = scrubBlockRef.current;
+    if (e.key === 'ArrowLeft') { setScrubBlock(Math.max(0, cur - step)); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { setScrubBlock(Math.min(TOTAL_BLOCKS, cur + step)); e.preventDefault(); }
     if (e.key === 'Home') { setScrubBlock(0); e.preventDefault(); }
     if (e.key === 'End') { setScrubBlock(TOTAL_BLOCKS); e.preventDefault(); }
   };
+
+  // Global keydown handler so the keyboard shortcuts work whenever the
+  // scrubber is on screen — not only when the handle itself has focus.
+  // Only intercepts ←/→/Home/End so it never swallows typing in other inputs.
+  useEffect(() => {
+    const onGlobalKey = (e) => {
+      const tag = (e.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+      const handled = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+      if (!handled.includes(e.key)) return;
+      // Only act if the scrubber is in the viewport, otherwise leave the
+      // browser's default behaviour (page scroll, etc.) alone.
+      const el = sectionRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const inView = r.bottom > 0 && r.top < window.innerHeight;
+      if (!inView) return;
+      onKeyDown(e);
+    };
+    window.addEventListener('keydown', onGlobalKey);
+    return () => window.removeEventListener('keydown', onGlobalKey);
+  }, [setScrubBlock]);
 
   const ticks = HALVINGS.map((h) => ({
     pct: (h.blockHeight / TOTAL_BLOCKS) * 100,
@@ -3108,7 +3138,7 @@ function Scrubber({ scrubBlock, setScrubBlock, current }) {
   }));
 
   return (
-    <section className="scrub-section" id="scrub">
+    <section className="scrub-section" id="scrub" ref={sectionRef}>
       <div className="container-wide">
         <div className="scrubber-card reveal" ref={ref}>
           <div className="scrubber-head">
@@ -3146,6 +3176,7 @@ function Scrubber({ scrubBlock, setScrubBlock, current }) {
                   <div className="scrub-today-label">NOW</div>
                 </div>
                 <div
+                  ref={handleRef}
                   className={`scrub-handle ${dragging ? 'dragging' : ''}`}
                   style={{ left: `${handlePct}%` }}
                   tabIndex={0}
@@ -5004,12 +5035,19 @@ function SpeedOfNexa() {
 
     const interp = window.d3.geoInterpolate([city1.lng, city1.lat], [city2.lng, city2.lat]);
 
-    // Phase timings — tight for "very fast Nexa"
-    const T_ZOOM_IN  = 580;
-    const T_HOLD_A   = 220;
-    const T_TRAVEL   = 820;   // the fast shot
-    const T_HOLD_B   = 280;
-    const T_ZOOM_OUT = 580;
+    // Phase timings — tight for "very fast Nexa".
+    // Travel time scales with great-circle distance so different city pairs
+    // feel distinct: ~180 ms for short hops, ~780 ms for antipodal pairs.
+    // Every pair lands under the old fixed 820 ms value.
+    const MIN_KM = 50;
+    const MAX_KM = 20000;
+    const km = distanceKm != null ? Math.max(MIN_KM, Math.min(MAX_KM, distanceKm)) : 8000;
+    const travelU = (km - MIN_KM) / (MAX_KM - MIN_KM);
+    const T_TRAVEL   = Math.round(180 + travelU * 600);   // 180–780 ms, per-pair
+    const T_ZOOM_IN  = 520;
+    const T_HOLD_A   = 200;
+    const T_HOLD_B   = 240;
+    const T_ZOOM_OUT = 520;
     const TOTAL = T_ZOOM_IN + T_HOLD_A + T_TRAVEL + T_HOLD_B + T_ZOOM_OUT;
     const startMs = performance.now();
 
@@ -6794,15 +6832,16 @@ function SoundOfNexa({ history, showToast }) {
     const T = window.Tone;
     if (!T) return;
     clearTransport();
-    const def = GENRE_DEFS[genre];
-    const halfTime = !!def.halfTime;
     T.Transport.bpm.value = tempo;
 
     let beatIdx = 0;
     let stepIdx = 0;
     const drumPattern = drumsOn ? DRUM_PATTERNS[genre] : null;
     const kit = drumKitRef.current;
-    const noteIvl = halfTime ? '2n' : '4n';   // dubstep half-time = 1 chord per half-note
+    // One chord per beat for every genre — keeps the displayed BPM honest.
+    // Dubstep's half-time feel comes from the drum pattern (kick on 1 & 3),
+    // not from slowing the chord progression.
+    const noteIvl = '4n';
 
     // Melody event — fires every beat (or half-note in halfTime)
     const melodyId = T.Transport.scheduleRepeat((time) => {
@@ -6867,16 +6906,118 @@ function SoundOfNexa({ history, showToast }) {
     if (T) try { T.Transport.bpm.value = tempo; } catch {}
   }, [tempo]);
 
+  // Encode each block as "<height>.<first16hex>" — 16 hex chars is enough for
+  // parseHashToChord (it only uses the first 8 bytes). Plus genre, BPM, drums,
+  // and melody-mode so the listener hears the exact arrangement.
+  const buildShareUrl = () => {
+    const blocks = bench
+      .map((b) => {
+        const hex = (b.hash || '').replace(/^0x/, '').toLowerCase().slice(0, 16);
+        return `${b.height}.${hex}`;
+      })
+      .join(',');
+    const params = new URLSearchParams();
+    params.set('v', '1');
+    params.set('g', genre);
+    params.set('bpm', String(tempo));
+    params.set('dr', drumsOn ? '1' : '0');
+    params.set('m', melodyMode ? '1' : '0');
+    params.set('b', blocks);
+    return `${getShareUrl()}#melody?${params.toString()}`;
+  };
+
   const shareMelody = () => {
     if (bench.length === 0) {
       showToast?.('Add blocks to your melody first');
       return;
     }
-    const heights = bench.map((b) => b.height).join(',');
-    const url = getShareUrl() + '#melody=' + encodeURIComponent(heights);
+    const url = buildShareUrl();
+    // Copy the URL to clipboard for direct paste-and-listen, then open tweet.
+    try {
+      navigator.clipboard?.writeText(url);
+      showToast?.('Melody link copied — paste it anywhere');
+    } catch {}
     const text = `I just composed a melody from Nexa block hashes. Each block is a chord, every era a different instrument. ${url}`;
     openTweet(text);
   };
+
+  // Rehydrate from URL hash on mount: #melody?v=1&g=classical&bpm=120&...&b=...
+  // Heights + first-16-hex of each block let parseHashToChord reproduce the
+  // exact chord. Older "#melody=h1,h2,..." links are also accepted (chord is
+  // derived from a deterministic placeholder hash so audio is consistent).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#melody')) return;
+    try {
+      let restored = [];
+      let restoredGenre = null;
+      let restoredTempo = null;
+      let restoredDrums = null;
+      let restoredMelodyMode = null;
+      const qIdx = hash.indexOf('?');
+      if (qIdx > 0) {
+        const params = new URLSearchParams(hash.slice(qIdx + 1));
+        restoredGenre = params.get('g');
+        const bpm = params.get('bpm');
+        if (bpm) restoredTempo = parseInt(bpm, 10);
+        const dr = params.get('dr');
+        if (dr != null) restoredDrums = dr === '1';
+        const m = params.get('m');
+        if (m != null) restoredMelodyMode = m === '1';
+        const b = params.get('b') || '';
+        restored = b
+          .split(',')
+          .filter(Boolean)
+          .map((token) => {
+            const [hStr, hexShort] = token.split('.');
+            const height = parseInt(hStr, 10);
+            if (!Number.isFinite(height)) return null;
+            const seedHex = (hexShort && /^[0-9a-f]+$/.test(hexShort) ? hexShort : '').padEnd(16, '0');
+            // parseHashToChord only reads the first 16 hex chars, so this is
+            // enough to reproduce the exact chord the sharer composed.
+            return { height, hash: seedHex.repeat(8).slice(0, 64) };
+          })
+          .filter(Boolean);
+      } else if (hash.startsWith('#melody=')) {
+        // Legacy "heights only" links — derive a deterministic placeholder hash
+        // from the height so two listeners hear the same chord.
+        const heights = decodeURIComponent(hash.slice('#melody='.length))
+          .split(',')
+          .map((s) => parseInt(s, 10))
+          .filter(Number.isFinite);
+        const derive = (h) => {
+          let x = h >>> 0;
+          x = (x ^ 61) ^ (x >>> 16); x = x + (x << 3); x = x ^ (x >>> 4);
+          x = (x * 0x27d4eb2d) >>> 0; x = x ^ (x >>> 15);
+          return x.toString(16).padStart(8, '0').repeat(8).slice(0, 64);
+        };
+        restored = heights.map((h) => ({ height: h, hash: derive(h) }));
+      }
+      if (restored.length) {
+        setBench(restored.slice(0, 16));
+        if (restoredGenre && GENRE_DEFS[restoredGenre]) {
+          setGenre(restoredGenre);
+          // Use stored values where present, else fall back to the genre's defaults.
+          const def = GENRE_DEFS[restoredGenre];
+          setTempo(restoredTempo != null && restoredTempo >= 40 && restoredTempo <= 220 ? restoredTempo : def.tempo);
+          setDrumsOn(restoredDrums != null ? restoredDrums : def.drums);
+          if (restoredMelodyMode != null) setMelodyMode(restoredMelodyMode);
+        } else {
+          if (restoredTempo != null && restoredTempo >= 40 && restoredTempo <= 220) setTempo(restoredTempo);
+          if (restoredDrums != null) setDrumsOn(restoredDrums);
+          if (restoredMelodyMode != null) setMelodyMode(restoredMelodyMode);
+        }
+        // Surface a hint so the listener knows what to do next.
+        setTimeout(() => {
+          showToast?.('Shared melody loaded — press Enable sound, then ▶ Play');
+          document.getElementById('sound')?.scrollIntoView({ behavior: 'smooth' });
+        }, 300);
+      }
+    } catch (e) {
+      // Bad URL — ignore silently, nothing was overwritten.
+    }
+  }, []);
 
   const blocksDesc = useMemo(() => [...history].reverse(), [history]);
 
@@ -7203,11 +7344,26 @@ function HalvingCardModal({ era, onClose, onJumpExplorer, showToast }) {
 }
 
 /* ---- Calendar ---- */
-// Calendar projects against the protocol target (120s) so the schedule
-// shown matches the canonical Nexa Emission Schedule spreadsheet.
+// Calendar anchors to the live chain tip when available so today's date matches
+// the Network state badge. Past dates project backward at the observed rate
+// (real chain has been faster than the 120s target). Future dates project
+// forward at the protocol target — that's the canonical schedule.
 const FINAL_DATE = new Date(GENESIS.getTime() + (HALVINGS[HALVINGS.length-1].blockHeight + BLOCKS_PER_HALVING) * BLOCK_TARGET_SEC * 1000);
 
-function stateAtDate(date) {
+function stateAtDate(date, anchor) {
+  if (anchor && anchor.now && anchor.currentBlock != null) {
+    const secsDiff = (date.getTime() - anchor.now.getTime()) / 1000;
+    let blocks;
+    if (secsDiff <= 0) {
+      // Past: at the observed rate the network has actually been running
+      blocks = Math.max(0, Math.round(anchor.currentBlock + secsDiff / OBSERVED_BLOCK_SEC));
+    } else {
+      // Future: at protocol target (difficulty retargets to it)
+      blocks = Math.min(TOTAL_BLOCKS, Math.round(anchor.currentBlock + secsDiff / BLOCK_TARGET_SEC));
+    }
+    return stateAtBlock(blocks);
+  }
+  // Fallback: pure deterministic projection from Genesis at protocol target
   const secs = (date - GENESIS) / 1000;
   const blocks = Math.max(0, Math.floor(secs / BLOCK_TARGET_SEC));
   return stateAtBlock(blocks);
@@ -7217,10 +7373,11 @@ function isSameDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function Calendar({ showToast }) {
+function Calendar({ showToast, current, now }) {
   const today = useMemo(() => new Date(), []);
   const [view, setView] = useState(() => ({ year: today.getFullYear(), month: today.getMonth() }));
   const [selected, setSelected] = useState(today);
+  const anchor = useMemo(() => (current && now ? { now, currentBlock: current.currentBlock } : null), [current, now]);
 
   const firstOfMonth = new Date(view.year, view.month, 1);
   const daysInMonth = new Date(view.year, view.month + 1, 0).getDate();
@@ -7254,7 +7411,7 @@ function Calendar({ showToast }) {
   };
 
   const preGenesis = selected < GENESIS;
-  const state = useMemo(() => stateAtDate(selected), [selected]);
+  const state = useMemo(() => stateAtDate(selected, anchor), [selected, anchor]);
   const daysSinceLaunch = Math.floor((selected - GENESIS) / 86400000);
   const dayOfWeek = selected.toLocaleString('en-US', { weekday: 'long' });
   const ageYears = (daysSinceLaunch / 365.25);
@@ -8322,7 +8479,7 @@ function App() {
       <SoundOfNexa history={blockHistory} showToast={showToast} />
       <ScheduleExplorer selected={selected} setSelected={setSelected} currentEra={current.currentEra} setScrubBlock={setScrubBlock} />
       <HalvingCards selected={selected} setSelected={setSelected} currentEra={current.currentEra} setScrubBlock={setScrubBlock} openModal={openModal} />
-      <Calendar showToast={showToast} />
+      <Calendar showToast={showToast} current={current} now={now} />
       <SpeedOfNexa />
       <CoinRace />
       <Fundamentals />
