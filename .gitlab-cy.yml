@@ -1,0 +1,10 @@
+pages:
+  stage: deploy
+  script:
+    - mkdir -p public
+    - cp -r index.html favicon.svg nexa-logo-mark.svg og-image.png public/
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
