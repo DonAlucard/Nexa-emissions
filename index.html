@@ -13,19 +13,24 @@
 
 <!-- Open Graph (Facebook, LinkedIn, Discord, Slack) -->
 <meta property="og:type" content="website" />
+<meta property="og:url" content="https://emission.nexa.org/" />
 <meta property="og:title" content="Nexa Emission Schedule" />
 <meta property="og:description" content="21 trillion NEXA, halving every four years. Live countdown, draggable timeline, 30 halving eras explained." />
-<meta property="og:image" content="og-image.png" />
+<meta property="og:image" content="https://emission.nexa.org/og-image.png" />
+<meta property="og:image:secure_url" content="https://emission.nexa.org/og-image.png" />
+<meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta property="og:image:alt" content="Nexa Emission Schedule — 21 trillion NEXA, halving every four years" />
 <meta property="og:site_name" content="Nexa Emission Schedule" />
+<link rel="canonical" href="https://emission.nexa.org/" />
 
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:url" content="https://emission.nexa.org/" />
 <meta name="twitter:title" content="Nexa Emission Schedule" />
 <meta name="twitter:description" content="21 trillion NEXA, halving every four years. Live countdown, draggable timeline, 30 halving eras." />
-<meta name="twitter:image" content="og-image.png" />
+<meta name="twitter:image" content="https://emission.nexa.org/og-image.png" />
 <meta name="twitter:image:alt" content="Nexa Emission Schedule — 21 trillion NEXA, halving every four years" />
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -3055,7 +3060,7 @@ function Hero({ current, showToast }) {
           <HeroCountdown targetDate={target} />
         </div>
         <div className="hero-share reveal in reveal-d4">
-          <ShareRow text={heroShareText} showToast={showToast} />
+          <ShareRow text={heroShareText} showToast={showToast} hash="countdown" />
         </div>
       </div>
     </header>
@@ -6219,8 +6224,8 @@ function BlockGallery({ history, showToast }) {
   };
 
   const shareArt = () => {
-    const text = `Nexa block #${hero.height.toLocaleString()} as sacred-geometry art. Every block, a unique mandala. ${getShareUrl()}#art`;
-    openTweet(text);
+    const text = `Nexa block #${hero.height.toLocaleString()} as sacred-geometry art. Every block, a unique mandala.`;
+    openTweet(text, 'art');
   };
 
   return (
@@ -7186,19 +7191,28 @@ function SoundOfNexa({ history, showToast }) {
   );
 }
 
-/* ---- Share helpers ---- */
+/* ---- Share helpers ----
+   Every Share button passes a hash that pins the link to a specific section
+   (#countdown, #era-3, #day-2026-05-25, #art, #melody?…). On load, the App's
+   hash router opens the matching modal / picks the matching date / scrolls to
+   the matching panel so the recipient lands exactly where the sharer wanted. */
 const SITE_HASHTAG = ' #Nexa';
-function getShareUrl() {
+function getShareUrl(hash) {
   if (typeof window === 'undefined') return '';
-  return window.location.origin + window.location.pathname;
+  const base = window.location.origin + window.location.pathname;
+  if (!hash) return base;
+  // Allow callers to pass either "art" or "#art"; also support text that
+  // already contains "#" further in (e.g., "melody?notes=...").
+  const normalized = hash.startsWith('#') ? hash : `#${hash}`;
+  return base + normalized;
 }
-function openTweet(text) {
-  const url = getShareUrl();
+function openTweet(text, hash) {
+  const url = getShareUrl(hash);
   const intent = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text + SITE_HASHTAG)}&url=${encodeURIComponent(url)}`;
   window.open(intent, '_blank', 'noopener,noreferrer,width=600,height=560');
 }
-async function copyShareLink(showToast) {
-  const url = getShareUrl();
+async function copyShareLink(showToast, hash) {
+  const url = getShareUrl(hash);
   try {
     await navigator.clipboard.writeText(url);
     showToast?.('Link copied to clipboard');
@@ -7212,18 +7226,18 @@ async function copyShareLink(showToast) {
   }
 }
 
-function ShareRow({ text, showToast, compact = false }) {
+function ShareRow({ text, showToast, compact = false, hash }) {
   const sizeProps = compact ? { className: 'share-btn x compact' } : { className: 'share-btn x' };
   const sizeProps2 = compact ? { className: 'share-btn copy compact' } : { className: 'share-btn copy' };
   return (
     <div className="share-row">
-      <button {...sizeProps} onClick={() => openTweet(text)} aria-label="Share on X">
+      <button {...sizeProps} onClick={() => openTweet(text, hash)} aria-label="Share on X">
         <svg viewBox="0 0 24 24" width={compact ? 12 : 14} height={compact ? 12 : 14} aria-hidden="true">
           <path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
         </svg>
         Share on X
       </button>
-      <button {...sizeProps2} onClick={() => copyShareLink(showToast)} aria-label="Copy link">
+      <button {...sizeProps2} onClick={() => copyShareLink(showToast, hash)} aria-label="Copy link">
         <svg viewBox="0 0 24 24" width={compact ? 12 : 14} height={compact ? 12 : 14} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -7357,6 +7371,7 @@ function HalvingCardModal({ era, onClose, onJumpExplorer, showToast }) {
           <ShareRow
             compact
             showToast={showToast}
+            hash={`era-${data.era}`}
             text={(() => {
               if (data.era === 0) {
                 return `Nexa launched on ${fmtDateLong(data.date)} with a 10M NEXA block reward. The first halving cuts it to 5M ~four years later.`;
@@ -7441,6 +7456,20 @@ function Calendar({ showToast, current, now }) {
     setView({ year: random.getFullYear(), month: random.getMonth() });
     setSelected(random);
   };
+
+  // Deep-link: when App's hash router parses #day-YYYY-MM-DD it fires this
+  // event; we sync the calendar's selected day and view month so the visitor
+  // lands on the exact date the sharer picked.
+  useEffect(() => {
+    const handler = (e) => {
+      const d = e.detail?.date;
+      if (!d || isNaN(d.getTime())) return;
+      setSelected(d);
+      setView({ year: d.getFullYear(), month: d.getMonth() });
+    };
+    window.addEventListener('nexa:select-day', handler);
+    return () => window.removeEventListener('nexa:select-day', handler);
+  }, []);
 
   const preGenesis = selected < GENESIS;
   const state = useMemo(() => stateAtDate(selected, anchor), [selected, anchor]);
@@ -7591,6 +7620,7 @@ function Calendar({ showToast, current, now }) {
                   <ShareRow
                     compact
                     showToast={showToast}
+                    hash={`day-${selected.getFullYear()}-${String(selected.getMonth()+1).padStart(2,'0')}-${String(selected.getDate()).padStart(2,'0')}`}
                     text={`On ${fmtDateLong(selected)}, Nexa will have emitted ${fmt(state.emitted, 2)} of 21T NEXA (${fmtPct(state.pct)}%). Block height ~${fmtFull(state.block)}, reward ${fmt(state.reward, 2)} per block. Day ${fmtFull(daysSinceLaunch)} since launch.`}
                   />
                 </div>
@@ -8496,6 +8526,54 @@ function App() {
     setScrubBlock(HALVINGS[era].blockHeight);
     setTimeout(() => document.getElementById('schedule')?.scrollIntoView({ behavior: 'smooth' }), 60);
   };
+
+  // Deep-link router. Every Share button writes a hash like #era-3 or
+  // #day-2026-05-25; this turns those hashes into the matching view on load
+  // (and whenever the hash changes via back/forward navigation).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const route = () => {
+      const raw = window.location.hash.replace(/^#/, '');
+      if (!raw) return;
+      // Strip query-string portion so #melody?notes=… still matches "melody".
+      const key = raw.split('?')[0];
+
+      // Era modal — #era-N
+      const eraMatch = key.match(/^era-(\d+)$/);
+      if (eraMatch) {
+        const era = parseInt(eraMatch[1], 10);
+        if (era >= 0 && era < HALVINGS.length) setModalEra(era);
+        return;
+      }
+
+      // Calendar day — #day-YYYY-MM-DD. Calendar listens for the event and
+      // updates its own selected date + view month, then we scroll there.
+      const dayMatch = key.match(/^day-(\d{4})-(\d{2})-(\d{2})$/);
+      if (dayMatch) {
+        const [, y, m, d] = dayMatch;
+        const date = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+        if (!isNaN(date.getTime())) {
+          window.dispatchEvent(new CustomEvent('nexa:select-day', { detail: { date } }));
+          setTimeout(() => document.getElementById('calendar')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
+        }
+        return;
+      }
+
+      // Plain section anchors — scroll into view smoothly.
+      if (key === 'countdown') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+      const el = document.getElementById(key);
+      if (el) {
+        setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
+      }
+    };
+    // Run once after first paint so components have mounted.
+    const t = setTimeout(route, 250);
+    window.addEventListener('hashchange', route);
+    return () => { clearTimeout(t); window.removeEventListener('hashchange', route); };
+  }, []);
 
   return (
     <>
